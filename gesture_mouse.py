@@ -1,11 +1,46 @@
 import cv2
 import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 import numpy as np
 import time
+import pickle
+import os
+import urllib.request
+from collections import Counter
 from pynput.mouse import Controller, Button
 from screeninfo import get_monitors
 
-# Initialize pynput mouse controller
+MODEL_FILE = "gesture_model.pkl"
+MODEL_PATH = "hand_landmarker.task"
+
+CLASSES = {
+    0: "Move (Hover)",
+    1: "Left Click / Drag",
+    2: "Right Click",
+    3: "Scroll Mode"
+}
+
+# Verify model file exists before launching
+if not os.path.exists(MODEL_FILE):
+    print(f"Error: Trained model '{MODEL_FILE}' not found!")
+    print("Please download LeapGestRecog, run preprocess_dataset.py, and train the model using train_model.py first.")
+    exit(1)
+
+# Check and download model asset if missing
+if not os.path.exists(MODEL_PATH):
+    print("Downloading hand_landmarker.task...")
+    urllib.request.urlretrieve(
+        "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+        MODEL_PATH
+    )
+
+# Load the trained machine learning classifier
+with open(MODEL_FILE, "rb") as f:
+    clf_model = pickle.load(f)
+print(f"Successfully loaded trained AI model: {type(clf_model).__name__}")
+
+# Initialize mouse controller
 mouse = Controller()
 
 # Fetch primary monitor dimensions
@@ -16,252 +51,264 @@ if not monitors:
 primary_monitor = monitors[0]
 SCREEN_WIDTH = primary_monitor.width
 SCREEN_HEIGHT = primary_monitor.height
-print(f"Screen resolution detected: {SCREEN_WIDTH}x{SCREEN_HEIGHT}")
+print(f"Screen resolution: {SCREEN_WIDTH}x{SCREEN_HEIGHT}")
 
-# Initialize MediaPipe Hands
-mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(
-    static_image_mode=False,
-    max_num_hands=1,
-    min_detection_confidence=0.7,
+# Initialize MediaPipe Tasks Hand Landmarker
+base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
+options = vision.HandLandmarkerOptions(
+    base_options=base_options,
+    num_hands=1,
+    min_hand_detection_confidence=0.7,
     min_tracking_confidence=0.7
 )
-mp_draw = mp.solutions.drawing_utils
+detector = vision.HandLandmarker.create_from_options(options)
 
-# Camera settings
+# Camera configuration
 CAM_WIDTH, CAM_HEIGHT = 640, 480
 cap = cv2.VideoCapture(0)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_WIDTH)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
 
-# Define tracking/touchpad box boundaries in camera coordinates
-# A central box ensures less physical hand movement is required to cover the screen
+# Define tracking/touchpad box boundaries (relative to camera dimensions)
+# Only moving within this box moves the cursor, allowing high sensitivity/smaller physical movement
 BOX_X1, BOX_Y1 = 150, 80
 BOX_X2, BOX_Y2 = 490, 360
 BOX_WIDTH = BOX_X2 - BOX_X1
 BOX_HEIGHT = BOX_Y2 - BOX_Y1
 
-# Smoothing settings (Exponential moving average)
-# Lower value = smoother movement but slight delay
-# Higher value = faster response but more jitter
-SMOOTHING = 0.25
+# Coordinate Smoothing (Exponential moving average)
+SMOOTHING = 0.22
 prev_x, prev_y = 0, 0
 
-# State variables for mouse clicks
+# Debouncing Configuration
+# We keep a history of raw model predictions to filter out frame-by-frame class noise
+DEBOUNCE_WINDOW = 6
+prediction_history = []
+
+# Action State Machine
 left_clicked = False
 right_clicked = False
 
-# Scroll state variables
+# Scroll State
 prev_scroll_y = None
 SCROLL_THRESHOLD = 0.01
 SCROLL_SPEED = 200
 
-# FPS calculation
+# FPS Calculation
 prev_time = 0
 
-def get_distance(p1, p2):
-    """Calculate Euclidean distance between two 3D landmarks."""
-    return np.sqrt((p1.x - p2.x)**2 + (p1.y - p2.y)**2 + (p1.z - p2.z)**2)
+# Hand Landmark Connection pairs for custom drawing
+CONNECTIONS = [
+    (0, 1), (1, 2), (2, 3), (3, 4),      # Thumb
+    (0, 5), (5, 6), (6, 7), (7, 8),      # Index
+    (9, 10), (10, 11), (11, 12),         # Middle
+    (13, 14), (14, 15), (15, 16),        # Ring
+    (0, 17), (17, 18), (18, 19), (19, 20),# Pinky
+    (5, 9), (9, 13), (13, 17)            # Palm base
+]
 
-def is_finger_up(landmarks, finger_name):
-    """
-    Check if a specific finger is extended (up) or folded (down).
-    Uses relative height comparison for index, middle, ring, pinky.
-    Uses wrist-to-tip distance for the thumb.
-    """
-    # Landmarks map:
-    # Index: Tip (8), PIP (6)
-    # Middle: Tip (12), PIP (10)
-    # Ring: Tip (16), PIP (14)
-    # Pinky: Tip (20), PIP (18)
-    if finger_name == "INDEX":
-        return landmarks[8].y < landmarks[6].y
-    elif finger_name == "MIDDLE":
-        return landmarks[12].y < landmarks[10].y
-    elif finger_name == "RING":
-        return landmarks[16].y < landmarks[14].y
-    elif finger_name == "PINKY":
-        return landmarks[20].y < landmarks[18].y
-    elif finger_name == "THUMB":
-        # Check if thumb tip (4) is extended outward from joint (2) relative to wrist (0)
-        dist_wrist_tip = np.sqrt((landmarks[4].x - landmarks[0].x)**2 + (landmarks[4].y - landmarks[0].y)**2)
-        dist_wrist_joint = np.sqrt((landmarks[2].x - landmarks[0].x)**2 + (landmarks[2].y - landmarks[0].y)**2)
-        return dist_wrist_tip > dist_wrist_joint
-    return False
+def draw_hand_custom(img_frame, landmarks_list):
+    """Draw high-tech glowing skeleton on detected hand landmarks."""
+    h, w, c = img_frame.shape
+    # Draw connection lines
+    for start_idx, end_idx in CONNECTIONS:
+        p1 = landmarks_list[start_idx]
+        p2 = landmarks_list[end_idx]
+        pt1 = (int(p1.x * w), int(p1.y * h))
+        pt2 = (int(p2.x * w), int(p2.y * h))
+        cv2.line(img_frame, pt1, pt2, (255, 230, 100), 2)  # Glowing cyan-blue
+        
+    # Draw joint points
+    for idx, lm in enumerate(landmarks_list):
+        cx, cy = int(lm.x * w), int(lm.y * h)
+        if idx in [4, 8, 12]:  # Important controller tips
+            cv2.circle(img_frame, (cx, cy), 6, (0, 0, 255), -1)  # Red tips
+        else:
+            cv2.circle(img_frame, (cx, cy), 4, (0, 255, 0), -1)  # Green joints
 
 print("Launching Virtual Mouse... Press 'q' in the camera window to quit.")
 
 while cap.isOpened():
     success, frame = cap.read()
     if not success:
-        print("Error: Could not read from webcam.")
+        print("Error: Could not read webcam frame.")
         break
 
-    # Flip the frame horizontally to match mirrored natural movements
     frame = cv2.flip(frame, 1)
     h, w, c = frame.shape
 
-    # Convert the BGR frame to RGB for MediaPipe processing
+    # Convert the frame to RGB for MediaPipe
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    results = hands.process(rgb_frame)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+    results = detector.detect(mp_image)
 
-    current_mode = "NO HAND DETECTED"
+    current_mode_text = "NO HAND DETECTED"
     mode_color = (128, 128, 128)
 
-    # Draw tracking/touchpad box
+    # Draw active tracking boundary box on screen
     cv2.rectangle(frame, (BOX_X1, BOX_Y1), (BOX_X2, BOX_Y2), (255, 255, 255), 2)
 
-    if results.multi_hand_landmarks:
-        for hand_landmarks in results.multi_hand_landmarks:
-            landmarks = hand_landmarks.landmark
+    if results.hand_landmarks:
+        # Get the first detected hand
+        landmarks = results.hand_landmarks[0]
+        
+        # Draw custom glows
+        draw_hand_custom(frame, landmarks)
+        
+        wrist = landmarks[0]
 
-            # Draw hand skeletal overlay
-            mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+        # ----------------------------------------------------
+        # 1. Feature Extraction & Normalization
+        # ----------------------------------------------------
+        rel_coords = []
+        distances = []
+        for lm in landmarks:
+            rx = lm.x - wrist.x
+            ry = lm.y - wrist.y
+            rel_coords.append((rx, ry))
+            distances.append(np.sqrt(rx**2 + ry**2))
 
-            # Detect which fingers are extended
-            index_up = is_finger_up(landmarks, "INDEX")
-            middle_up = is_finger_up(landmarks, "MIDDLE")
-            ring_up = is_finger_up(landmarks, "RING")
-            pinky_up = is_finger_up(landmarks, "PINKY")
-            thumb_up = is_finger_up(landmarks, "THUMB")
+        # Epsilon-safe scale normalization
+        max_dist = max(distances)
+        if max_dist < 1e-5:
+            max_dist = 1e-5
 
-            # Reference length for scale-independent distance thresholding (Wrist to Index MCP)
-            ref_dist = get_distance(landmarks[0], landmarks[5])
+        normalized_features = []
+        for rx, ry in rel_coords:
+            normalized_features.append(rx / max_dist)
+            normalized_features.append(ry / max_dist)
 
-            # ----------------------------------------------------
-            # 1. LEFT CLICK & DRAG GESTURE
-            # Gesture: Index + Middle finger UP & touching (pinched)
-            # ----------------------------------------------------
-            if index_up and middle_up and not ring_up and not pinky_up:
-                dist_index_middle = get_distance(landmarks[8], landmarks[12])
-                ratio = dist_index_middle / ref_dist
+        # ----------------------------------------------------
+        # 2. ML Inference & Debouncing
+        # ----------------------------------------------------
+        raw_prediction = int(clf_model.predict([normalized_features])[0])
+        
+        # Debouncing: majority voting across the last N predictions
+        prediction_history.append(raw_prediction)
+        if len(prediction_history) > DEBOUNCE_WINDOW:
+            prediction_history.pop(0)
+            
+        # Mode of the window represents the debounced gesture class
+        predicted_class = Counter(prediction_history).most_common(1)[0][0]
 
-                # If fingers are pinched together (ratio < threshold)
-                if ratio < 0.28:
-                    current_mode = "LEFT CLICK / DRAG"
-                    mode_color = (0, 0, 255)  # Red
-                    if not left_clicked:
-                        mouse.press(Button.left)
-                        left_clicked = True
-                else:
-                    # If extended but not touching -> SCROLL MODE
-                    current_mode = "SCROLL MODE"
-                    mode_color = (255, 0, 0)  # Blue
-                    
-                    # Release left click if it was active
-                    if left_clicked:
-                        mouse.release(Button.left)
-                        left_clicked = False
-                    
-                    # Handle scrolling logic
-                    current_scroll_y = landmarks[8].y
-                    if prev_scroll_y is not None:
-                        diff = prev_scroll_y - current_scroll_y
-                        if abs(diff) > SCROLL_THRESHOLD:
-                            scroll_amount = int(diff * SCROLL_SPEED)
-                            if scroll_amount != 0:
-                                mouse.scroll(0, scroll_amount)
-                    prev_scroll_y = current_scroll_y
+        # ----------------------------------------------------
+        # 3. Mouse Coordinate Tracking & Smoothing
+        # ----------------------------------------------------
+        # The cursor tracks the index finger tip (landmark 8) coordinates directly
+        ix, iy = landmarks[8].x * w, landmarks[8].y * h
 
-            # ----------------------------------------------------
-            # 2. RIGHT CLICK GESTURE
-            # Gesture: Thumb + Index finger UP & touching (pinched)
-            # ----------------------------------------------------
-            elif thumb_up and index_up and not middle_up and not ring_up and not pinky_up:
-                dist_thumb_index = get_distance(landmarks[4], landmarks[8])
-                ratio = dist_thumb_index / ref_dist
+        # Map the coordinates relative to our touchpad box boundaries
+        ix_clamped = np.clip(ix, BOX_X1, BOX_X2)
+        iy_clamped = np.clip(iy, BOX_Y1, BOX_Y2)
 
-                if ratio < 0.35:
-                    current_mode = "RIGHT CLICK"
-                    mode_color = (0, 255, 255)  # Yellow
-                    if not right_clicked:
-                        mouse.click(Button.right, 1)
-                        right_clicked = True
-                else:
-                    if right_clicked:
-                        right_clicked = False
-                    current_mode = "RIGHT CLICK PENDING"
-                    mode_color = (0, 165, 255)  # Orange
+        # Convert to [0.0, 1.0] inside the box
+        norm_x = (ix_clamped - BOX_X1) / BOX_WIDTH
+        norm_y = (iy_clamped - BOX_Y1) / BOX_HEIGHT
 
-            # ----------------------------------------------------
-            # 3. CURSOR MOVEMENT MODE
-            # Gesture: Only Index finger UP, others folded
-            # ----------------------------------------------------
-            elif index_up and not middle_up and not ring_up and not pinky_up:
-                current_mode = "CURSOR MOVE"
-                mode_color = (0, 255, 0)  # Green
+        # Interpolate to target screen coordinates
+        target_x = norm_x * SCREEN_WIDTH
+        target_y = norm_y * SCREEN_HEIGHT
 
-                # Clean up other click states
-                if left_clicked:
-                    mouse.release(Button.left)
-                    left_clicked = False
-                prev_scroll_y = None
+        # Smooth cursor movement to eliminate coordinate noise
+        smoothed_x = prev_x + SMOOTHING * (target_x - prev_x)
+        smoothed_y = prev_y + SMOOTHING * (target_y - prev_y)
+        prev_x, prev_y = smoothed_x, smoothed_y
 
-                # Get index finger tip coordinates
-                ix, iy = landmarks[8].x * w, landmarks[8].y * h
+        # Always move the cursor when hand is detected, unless scrolling or clicking is doing something else
+        mouse.position = (int(smoothed_x), int(smoothed_y))
 
-                # Map coordinates relative to the tracking box
-                # Clamp coordinates to the box size
-                ix_clamped = np.clip(ix, BOX_X1, BOX_X2)
-                iy_clamped = np.clip(iy, BOX_Y1, BOX_Y2)
+        # ----------------------------------------------------
+        # 4. Gesture to Action Mapping State Machine
+        # ----------------------------------------------------
+        
+        # [Class 0: CURSOR MOVE]
+        if predicted_class == 0:
+            current_mode_text = CLASSES[0]
+            mode_color = (0, 255, 0)  # Green
+            
+            # Cleanup click and scroll states
+            if left_clicked:
+                mouse.release(Button.left)
+                left_clicked = False
+            if right_clicked:
+                right_clicked = False
+            prev_scroll_y = None
 
-                # Normalize coordinates within the box (0.0 to 1.0)
-                norm_x = (ix_clamped - BOX_X1) / BOX_WIDTH
-                norm_y = (iy_clamped - BOX_Y1) / BOX_HEIGHT
+        # [Class 1: LEFT CLICK & DRAG]
+        elif predicted_class == 1:
+            current_mode_text = CLASSES[1]
+            mode_color = (0, 0, 255)  # Red
+            
+            if not left_clicked:
+                mouse.press(Button.left)
+                left_clicked = True
+            if right_clicked:
+                right_clicked = False
+            prev_scroll_y = None
 
-                # Interpolate to full screen resolution
-                target_x = norm_x * SCREEN_WIDTH
-                target_y = norm_y * SCREEN_HEIGHT
+        # [Class 2: RIGHT CLICK]
+        elif predicted_class == 2:
+            current_mode_text = CLASSES[2]
+            mode_color = (0, 255, 255)  # Yellow
+            
+            if not right_clicked:
+                mouse.click(Button.right, 1)
+                right_clicked = True
+            if left_clicked:
+                mouse.release(Button.left)
+                left_clicked = False
+            prev_scroll_y = None
 
-                # Apply exponential smoothing filter
-                smoothed_x = prev_x + SMOOTHING * (target_x - prev_x)
-                smoothed_y = prev_y + SMOOTHING * (target_y - prev_y)
+        # [Class 3: SCROLL MODE]
+        elif predicted_class == 3:
+            current_mode_text = CLASSES[3]
+            mode_color = (255, 0, 0)  # Blue
+            
+            if left_clicked:
+                mouse.release(Button.left)
+                left_clicked = False
+            if right_clicked:
+                right_clicked = False
 
-                # Move cursor to smoothed coordinates
-                # Cast to integer since screen pixels are discrete
-                mouse.position = (int(smoothed_x), int(smoothed_y))
+            # Handle scrolling logic
+            current_scroll_y = landmarks[8].y
+            if prev_scroll_y is not None:
+                diff = prev_scroll_y - current_scroll_y
+                if abs(diff) > SCROLL_THRESHOLD:
+                    scroll_amount = int(diff * SCROLL_SPEED)
+                    if scroll_amount != 0:
+                        mouse.scroll(0, scroll_amount)
+            prev_scroll_y = current_scroll_y
 
-                # Save current position for next frame smoothing
-                prev_x, prev_y = smoothed_x, smoothed_y
-
-                # Draw a highlight circle on the index finger tip
-                cv2.circle(frame, (int(ix), int(iy)), 12, mode_color, -1)
-
-            # If no recognized gesture is active, clean up all mouse states
-            else:
-                current_mode = "NEUTRAL (HOVER)"
-                mode_color = (200, 200, 200)
-                if left_clicked:
-                    mouse.release(Button.left)
-                    left_clicked = False
-                prev_scroll_y = None
+        # Highlight tracking coordinate (Index tip) in HUD
+        cv2.circle(frame, (int(ix), int(iy)), 12, mode_color, -1)
 
     else:
-        # No hand detected, reset click states
+        # Reset prediction history and mouse states when no hand is present
+        prediction_history.clear()
         if left_clicked:
             mouse.release(Button.left)
             left_clicked = False
+        right_clicked = False
         prev_scroll_y = None
 
-    # Calculate and overlay frame rate (FPS)
+    # Calculate and render FPS
     curr_time = time.time()
     fps = 1 / (curr_time - prev_time) if (curr_time - prev_time) > 0 else 0
     prev_time = curr_time
-    cv2.putText(frame, f"FPS: {int(fps)}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-
-    # Display gesture status HUD
-    cv2.putText(frame, f"MODE: {current_mode}", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, mode_color, 2)
     
-    # Instruction hints
-    cv2.putText(frame, "Gestures:", (20, 410), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-    cv2.putText(frame, "- Index finger UP: Move cursor", (20, 430), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-    cv2.putText(frame, "- Index + Middle touch: Left Click/Drag", (20, 450), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-    cv2.putText(frame, "- Index + Middle apart: Scroll", (20, 470), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+    # HUD details
+    cv2.putText(frame, f"FPS: {int(fps)}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    cv2.putText(frame, f"MODE: {current_mode_text}", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, mode_color, 2)
+    
+    cv2.putText(frame, "Gestures (ML-Driven):", (20, 410), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    cv2.putText(frame, "0 -> Move Cursor (Index finger up)", (20, 430), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+    cv2.putText(frame, "1 -> Left Click/Drag (Closed Fist)", (20, 450), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+    cv2.putText(frame, "2 -> Right Click (Index + Thumb extended)", (20, 470), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
-    # Show processed frame in OpenCV Window
+    # Show video frame
     cv2.imshow("Gesture Control Virtual Mouse", frame)
 
-    # Press 'q' to release camera resources and exit
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 

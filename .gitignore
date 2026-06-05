@@ -1,0 +1,16 @@
+# Ignore large raw datasets
+dataset/
+LeapGestRecog/
+leapgestrecog/
+*.zip
+*.tar.gz
+
+# Ignore generated training data and model binaries
+gesture_data.csv
+gesture_model.pkl
+
+# Ignore python cache and logs
+__pycache__/
+*.pyc
+*.log
+.system_generated/
