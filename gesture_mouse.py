@@ -361,11 +361,11 @@ while True:
     cv2.putText(frame, f"FPS: {int(fps)}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
     cv2.putText(frame, f"MODE: {current_mode_text}", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, mode_color, 2)
     
-    cv2.putText(frame, "Custom Gestures (ML-Driven):", (20, 400), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
-    cv2.putText(frame, "0 -> Move Cursor [Index Up]", (20, 420), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-    cv2.putText(frame, "1 -> Left Click [Index + Thumb Pinch]", (20, 440), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-    cv2.putText(frame, "2 -> Right Click [Index + Pinky Up]", (20, 460), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-    cv2.putText(frame, "3 -> Scroll Mode [Index + Middle Up]", (20, 480), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+    cv2.putText(frame, "Custom Gestures (ML-Driven):", (20, 370), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+    cv2.putText(frame, "0 -> Move Cursor [Index Up]", (20, 390), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+    cv2.putText(frame, "1 -> Left Click [Index + Thumb Pinch]", (20, 410), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+    cv2.putText(frame, "2 -> Right Click [Index + Pinky Up]", (20, 430), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+    cv2.putText(frame, "3 -> Scroll Mode [Index + Middle Up]", (20, 450), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
 
     # Show video frame
     cv2.imshow("Gesture Control Virtual Mouse", frame)
