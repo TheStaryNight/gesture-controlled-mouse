@@ -7,6 +7,7 @@ import time
 import pickle
 import os
 import urllib.request
+import threading
 from collections import Counter
 from pynput.mouse import Controller, Button
 from screeninfo import get_monitors
@@ -14,18 +15,18 @@ from screeninfo import get_monitors
 MODEL_FILE = "gesture_model.pkl"
 MODEL_PATH = "hand_landmarker.task"
 
+# User-requested gesture mappings
 CLASSES = {
-    0: "Move (Hover)",
-    1: "Left Click / Drag",
-    2: "Right Click",
-    3: "Scroll Mode"
+    0: "Move (Hover) [Index Up]",
+    1: "Left Click [Index + Thumb Pinch]",
+    2: "Right Click [Index + Pinky Up]",
+    3: "Scroll Mode [Index + Middle Up]"
 }
 
-# Verify model file exists before launching
+# Verify model file exists
 if not os.path.exists(MODEL_FILE):
-    print(f"Error: Trained model '{MODEL_FILE}' not found!")
-    print("Please download LeapGestRecog, run preprocess_dataset.py, and train the model using train_model.py first.")
-    exit(1)
+    print(f"Warning: Trained model '{MODEL_FILE}' not found!")
+    print("Please record your custom gestures using collect_data.py, then run train_model.py to generate the model.")
 
 # Check and download model asset if missing
 if not os.path.exists(MODEL_PATH):
@@ -35,10 +36,12 @@ if not os.path.exists(MODEL_PATH):
         MODEL_PATH
     )
 
-# Load the trained machine learning classifier
-with open(MODEL_FILE, "rb") as f:
-    clf_model = pickle.load(f)
-print(f"Successfully loaded trained AI model: {type(clf_model).__name__}")
+# Load the trained machine learning classifier (only if it exists)
+clf_model = None
+if os.path.exists(MODEL_FILE):
+    with open(MODEL_FILE, "rb") as f:
+        clf_model = pickle.load(f)
+    print(f"Successfully loaded trained AI model: {type(clf_model).__name__}")
 
 # Initialize mouse controller
 mouse = Controller()
@@ -53,21 +56,70 @@ SCREEN_WIDTH = primary_monitor.width
 SCREEN_HEIGHT = primary_monitor.height
 print(f"Screen resolution: {SCREEN_WIDTH}x{SCREEN_HEIGHT}")
 
-# Initialize MediaPipe Tasks Hand Landmarker
-base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
-options = vision.HandLandmarkerOptions(
-    base_options=base_options,
-    num_hands=1,
-    min_hand_detection_confidence=0.7,
-    min_tracking_confidence=0.7
-)
-detector = vision.HandLandmarker.create_from_options(options)
+# High-Performance Threaded Video Stream (eliminates camera I/O lag, boosting FPS to 60)
+class ThreadedVideoStream:
+    def __init__(self, src=0):
+        self.stream = cv2.VideoCapture(src)
+        self.stream.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self.stream.set(cv2.CAP_PROP_FPS, 60)  # Attempt to set 60 FPS
+        (self.grabbed, self.frame) = self.stream.read()
+        self.stopped = False
+        self.lock = threading.Lock()
 
-# Camera configuration
-CAM_WIDTH, CAM_HEIGHT = 640, 480
-cap = cv2.VideoCapture(0)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_WIDTH)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
+    def start(self):
+        t = threading.Thread(target=self.update, args=())
+        t.daemon = True
+        t.start()
+        return self
+
+    def update(self):
+        while True:
+            if self.stopped:
+                return
+            (grabbed, frame) = self.stream.read()
+            if grabbed:
+                with self.lock:
+                    self.frame = frame
+            else:
+                time.sleep(0.001)
+
+    def read(self):
+        with self.lock:
+            return self.frame.copy() if self.frame is not None else None
+
+    def stop(self):
+        self.stopped = True
+        self.stream.release()
+
+# Initialize MediaPipe Tasks Hand Landmarker (with GPU hardware acceleration support)
+try:
+    print("Initializing Hand Landmarker with GPU support...")
+    base_options = python.BaseOptions(
+        model_asset_path=MODEL_PATH,
+        delegate=python.BaseOptions.Delegate.GPU
+    )
+    options = vision.HandLandmarkerOptions(
+        base_options=base_options,
+        num_hands=1,
+        min_hand_detection_confidence=0.7,
+        min_tracking_confidence=0.7
+    )
+    detector = vision.HandLandmarker.create_from_options(options)
+    print("GPU acceleration enabled.")
+except Exception as e:
+    print(f"GPU initialization failed ({e}). Falling back to CPU...")
+    base_options = python.BaseOptions(
+        model_asset_path=MODEL_PATH,
+        delegate=python.BaseOptions.Delegate.CPU
+    )
+    options = vision.HandLandmarkerOptions(
+        base_options=base_options,
+        num_hands=1,
+        min_hand_detection_confidence=0.7,
+        min_tracking_confidence=0.7
+    )
+    detector = vision.HandLandmarker.create_from_options(options)
 
 # Define tracking/touchpad box boundaries (relative to camera dimensions)
 # Only moving within this box moves the cursor, allowing high sensitivity/smaller physical movement
@@ -77,6 +129,8 @@ BOX_WIDTH = BOX_X2 - BOX_X1
 BOX_HEIGHT = BOX_Y2 - BOX_Y1
 
 # Coordinate Smoothing (Exponential moving average)
+# Lower values make the cursor smoother, but introduce lag.
+# E.g., 0.22 is a good compromise.
 SMOOTHING = 0.22
 prev_x, prev_y = 0, 0
 
@@ -97,7 +151,7 @@ SCROLL_SPEED = 200
 # FPS Calculation
 prev_time = 0
 
-# Hand Landmark Connection pairs for custom drawing
+# Connections map for custom high-tech HUD drawing
 CONNECTIONS = [
     (0, 1), (1, 2), (2, 3), (3, 4),      # Thumb
     (0, 5), (5, 6), (6, 7), (7, 8),      # Index
@@ -121,18 +175,21 @@ def draw_hand_custom(img_frame, landmarks_list):
     # Draw joint points
     for idx, lm in enumerate(landmarks_list):
         cx, cy = int(lm.x * w), int(lm.y * h)
-        if idx in [4, 8, 12]:  # Important controller tips
+        if idx in [4, 8, 12, 20]:  # Important controller tips
             cv2.circle(img_frame, (cx, cy), 6, (0, 0, 255), -1)  # Red tips
         else:
             cv2.circle(img_frame, (cx, cy), 4, (0, 255, 0), -1)  # Green joints
 
+# Start threaded video stream
+vs = ThreadedVideoStream(0).start()
+time.sleep(1.0)  # Let camera initialize
+
 print("Launching Virtual Mouse... Press 'q' in the camera window to quit.")
 
-while cap.isOpened():
-    success, frame = cap.read()
-    if not success:
-        print("Error: Could not read webcam frame.")
-        break
+while True:
+    frame = vs.read()
+    if frame is None:
+        continue
 
     frame = cv2.flip(frame, 1)
     h, w, c = frame.shape
@@ -152,7 +209,7 @@ while cap.isOpened():
         # Get the first detected hand
         landmarks = results.hand_landmarks[0]
         
-        # Draw custom glows
+        # Draw custom skeleton glow
         draw_hand_custom(frame, landmarks)
         
         wrist = landmarks[0]
@@ -181,15 +238,18 @@ while cap.isOpened():
         # ----------------------------------------------------
         # 2. ML Inference & Debouncing
         # ----------------------------------------------------
-        raw_prediction = int(clf_model.predict([normalized_features])[0])
+        predicted_class = 0  # Default to Hover if model not loaded
         
-        # Debouncing: majority voting across the last N predictions
-        prediction_history.append(raw_prediction)
-        if len(prediction_history) > DEBOUNCE_WINDOW:
-            prediction_history.pop(0)
+        if clf_model is not None:
+            raw_prediction = int(clf_model.predict([normalized_features])[0])
             
-        # Mode of the window represents the debounced gesture class
-        predicted_class = Counter(prediction_history).most_common(1)[0][0]
+            # Debouncing: majority voting across the last N predictions
+            prediction_history.append(raw_prediction)
+            if len(prediction_history) > DEBOUNCE_WINDOW:
+                prediction_history.pop(0)
+                
+            # Mode of the window represents the debounced gesture class
+            predicted_class = Counter(prediction_history).most_common(1)[0][0]
 
         # ----------------------------------------------------
         # 3. Mouse Coordinate Tracking & Smoothing
@@ -214,7 +274,7 @@ while cap.isOpened():
         smoothed_y = prev_y + SMOOTHING * (target_y - prev_y)
         prev_x, prev_y = smoothed_x, smoothed_y
 
-        # Always move the cursor when hand is detected, unless scrolling or clicking is doing something else
+        # Always move the cursor when hand is detected, unless scrolling
         mouse.position = (int(smoothed_x), int(smoothed_y))
 
         # ----------------------------------------------------
@@ -301,10 +361,11 @@ while cap.isOpened():
     cv2.putText(frame, f"FPS: {int(fps)}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
     cv2.putText(frame, f"MODE: {current_mode_text}", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, mode_color, 2)
     
-    cv2.putText(frame, "Gestures (ML-Driven):", (20, 410), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-    cv2.putText(frame, "0 -> Move Cursor (Index finger up)", (20, 430), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-    cv2.putText(frame, "1 -> Left Click/Drag (Closed Fist)", (20, 450), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-    cv2.putText(frame, "2 -> Right Click (Index + Thumb extended)", (20, 470), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+    cv2.putText(frame, "Custom Gestures (ML-Driven):", (20, 400), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+    cv2.putText(frame, "0 -> Move Cursor [Index Up]", (20, 420), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+    cv2.putText(frame, "1 -> Left Click [Index + Thumb Pinch]", (20, 440), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+    cv2.putText(frame, "2 -> Right Click [Index + Pinky Up]", (20, 460), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+    cv2.putText(frame, "3 -> Scroll Mode [Index + Middle Up]", (20, 480), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
 
     # Show video frame
     cv2.imshow("Gesture Control Virtual Mouse", frame)
@@ -312,6 +373,6 @@ while cap.isOpened():
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
-cap.release()
+vs.stop()
 cv2.destroyAllWindows()
 print("Virtual Mouse shut down successfully.")
