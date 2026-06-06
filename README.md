@@ -4,11 +4,15 @@ A real-time computer vision application that allows you to control your PC's mou
 
 This project uses **Google MediaPipe Tasks API** for high-precision hand landmark extraction and a **Custom Random Forest Classifier** (via Scikit-Learn) trained specifically on *your* hand for 100% accuracy and zero jitter.
 
+> [!IMPORTANT]
+> **Trained model binaries (`.pkl`) and datasets (`.csv`) are NOT pushed to GitHub.** 
+> Anyone cloning this repository **must train the model on their own hand first** before they can run the virtual mouse!
+
 ---
 
 ## 🚀 Installation & Setup
 
-1. **Clone the repository** (if you haven't already):
+1. **Clone the repository**:
    ```powershell
    git clone https://github.com/TheStaryNight/gesture-controlled-mouse.git
    cd gesture-controlled-mouse
@@ -23,9 +27,36 @@ This project uses **Google MediaPipe Tasks API** for high-precision hand landmar
 
 ---
 
-## 🎮 How to Use It
+## 🏋️ Step 1: Train the AI on Your Own Hand (REQUIRED FIRST STEP)
 
-Start the virtual mouse using:
+Training the model on your own hand takes **less than 2 minutes** and ensures the mouse works perfectly with your hand size and camera angle.
+
+### 1. Run the Data Collector
+Start the webcam collection script:
+```powershell
+py collect_data.py
+```
+
+### 2. Record Your Gestures
+Hold your hand in front of the camera and **press and hold** the corresponding number key on your keyboard for 5–10 seconds per pose (aim for **150–200 frames** per class). Move and tilt your hand slightly while recording to capture variations:
+* Hold **Index finger UP** (others folded) ➔ Hold **`0`** (Move Cursor)
+* Hold **Index + Thumb pinched together** ➔ Hold **`1`** (Left Click / Drag)
+* Hold **Index + Pinky UP** (others folded) ➔ Hold **`2`** (Right Click)
+* Hold **Index + Middle UP** (separated) ➔ Hold **`3`** (Scroll Mode)
+
+Press **`q`** on the camera window when done. This saves the coordinates to `gesture_data.csv`.
+
+### 3. Train the Model
+```powershell
+py train_model.py
+```
+This script trains a Random Forest Classifier and an MLP Neural Network, compares their accuracies, and saves the best model to **`gesture_model.pkl`**.
+
+---
+
+## 🎮 Step 2: Run the Virtual Mouse
+
+Once you have successfully trained your model and generated `gesture_model.pkl`, start the virtual mouse using:
 ```powershell
 py gesture_mouse.py
 ```
@@ -41,38 +72,6 @@ Move your hand inside the **white touchpad boundary box** on the camera screen. 
 | **Scroll Mode** | **Index + Middle fingers UP** (separated) | Slide hand up/down to scroll | **Blue** |
 
 * **To Stop the App**: Click on the camera window and press **`q`** on your keyboard, or press **`Ctrl` + `C`** in your terminal.
-
----
-
-## 🏋️ How to Train the AI on Your Own Hand
-
-Training the model on your own hand takes **less than 2 minutes** and ensures the mouse works perfectly with your camera angle and hand size.
-
-### 1. Start Fresh (Optional)
-If you want to record a brand-new dataset, delete the existing data file first:
-```powershell
-Remove-Item gesture_data.csv -ErrorAction SilentlyContinue
-```
-
-### 2. Run the Data Collector
-```powershell
-py collect_data.py
-```
-
-### 3. Record Poses
-Hold your hand in front of the camera and **press and hold** the corresponding key for 5–10 seconds per pose while moving your hand slightly to collect different distances and angles (aim for **150–200 frames** per class):
-* Hold **Index finger UP** ➔ Hold **`0`**
-* Hold **Index + Thumb pinch** ➔ Hold **`1`**
-* Hold **Index + Pinky UP** ➔ Hold **`2`**
-* Hold **Index + Middle UP** ➔ Hold **`3`**
-
-Press **`q`** in the window when done. This saves the training data to `gesture_data.csv`.
-
-### 4. Train the Model
-```powershell
-py train_model.py
-```
-This script trains a Random Forest Classifier and an MLP Neural Network, compares their accuracies, and saves the best model to **`gesture_model.pkl`**.
 
 ---
 
