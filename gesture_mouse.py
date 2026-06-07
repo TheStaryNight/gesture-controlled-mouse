@@ -18,7 +18,7 @@ MODEL_PATH = "hand_landmarker.task"
 # User-requested gesture mappings
 CLASSES = {
     0: "Move (Hover) [Index Up]",
-    1: "Left Click [Index + Thumb Pinch]",
+    1: "Left Click [Index + Thumb Up]",
     2: "Right Click [Index + Pinky Up]",
     3: "Scroll Mode [Index + Middle Up]"
 }
@@ -363,7 +363,7 @@ while True:
     
     cv2.putText(frame, "Custom Gestures (ML-Driven):", (20, 370), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
     cv2.putText(frame, "0 -> Move Cursor [Index Up]", (20, 390), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-    cv2.putText(frame, "1 -> Left Click [Index + Thumb Pinch]", (20, 410), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+    cv2.putText(frame, "1 -> Left Click [Index + Thumb Up]", (20, 410), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
     cv2.putText(frame, "2 -> Right Click [Index + Pinky Up]", (20, 430), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
     cv2.putText(frame, "3 -> Scroll Mode [Index + Middle Up]", (20, 450), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
 

@@ -40,7 +40,7 @@ py collect_data.py
 ### 2. Record Your Gestures
 Hold your hand in front of the camera and **press and hold** the corresponding number key on your keyboard for 5–10 seconds per pose (aim for **150–200 frames** per class). Move and tilt your hand slightly while recording to capture variations:
 * Hold **Index finger UP** (others folded) ➔ Hold **`0`** (Move Cursor)
-* Hold **Index + Thumb pinched together** ➔ Hold **`1`** (Left Click / Drag)
+* Hold **Index + Thumb both UP** ➔ Hold **`1`** (Left Click / Drag)
 * Hold **Index + Pinky UP** (others folded) ➔ Hold **`2`** (Right Click)
 * Hold **Index + Middle UP** (separated) ➔ Hold **`3`** (Scroll Mode)
 
@@ -67,7 +67,7 @@ Move your hand inside the **white touchpad boundary box** on the camera screen. 
 | Mode | Gesture | Mouse Action | HUD Color |
 | :--- | :--- | :--- | :--- |
 | **Move (Hover)** | **Index finger UP** (others folded) | Move mouse cursor | **Green** |
-| **Left Click / Drag** | **Index + Thumb pinched together** | Click & Hold (Drag) | **Red** |
+| **Left Click / Drag** | **Index + Thumb both UP** | Click & Hold (Drag) | **Red** |
 | **Right Click** | **Index + Pinky fingers UP** (others folded) | Single Right Click | **Yellow** |
 | **Scroll Mode** | **Index + Middle fingers UP** (separated) | Slide hand up/down to scroll | **Blue** |
 
