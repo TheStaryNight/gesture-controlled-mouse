@@ -12,7 +12,7 @@ import urllib.request
 # Define custom gesture classes requested by the user
 CLASSES = {
     0: "Move (Hover) [Index Up]",
-    1: "Left Click [Index + Thumb Pinch]",
+    1: "Left Click [Index + Thumb Up]",
     2: "Right Click [Index + Pinky Up]",
     3: "Scroll Mode [Index + Middle Up]"
 }
