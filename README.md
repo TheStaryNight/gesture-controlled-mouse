@@ -23,7 +23,31 @@ This project uses **Google MediaPipe Tasks API** for high-precision hand landmar
    ```powershell
    py -m pip install -r requirements.txt
    ```
-   *Note: This will download `opencv-python`, `mediapipe`, `pynput`, `screeninfo`, and `scikit-learn`.*
+   *This installs `opencv-python`, `mediapipe`, `pynput`, `screeninfo`, `scikit-learn`, and `streamlit`.*
+
+---
+
+## Dashboard (Streamlit UI)
+
+This project includes a web-based dashboard that lets you do everything from a single interface — no need to remember terminal commands.
+
+**To launch the dashboard:**
+```powershell
+py -m streamlit run app.py
+```
+
+Then open [http://localhost:8501](http://localhost:8501) in your browser.
+
+From the dashboard you can:
+- **Collect Data** — opens the webcam collector window
+- **Train Model** — trains and auto-selects the best classifier
+- **Run Mouse** — launches the gesture-controlled virtual mouse
+- **Delete Model / Dataset** — reset everything to start fresh
+
+The dashboard also shows your current dataset stats and model status at a glance.
+
+> [!TIP]
+> If you prefer using the terminal instead of the dashboard, follow the manual steps below.
 
 ---
 
@@ -85,4 +109,7 @@ Remove-Item gesture_model.pkl, gesture_data.csv -ErrorAction SilentlyContinue
 
 Alternatively, you can manually delete these two files from your file explorer:
 * **`gesture_model.pkl`** (the compiled AI model)
-* **`gesture_data.csv`** (your recorded coordinate coordinates)
+* **`gesture_data.csv`** (your recorded coordinate data)
+
+Or use the **Delete** buttons in the Streamlit dashboard.
+
