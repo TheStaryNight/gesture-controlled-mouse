@@ -56,46 +56,49 @@ def main():
         print("Error: You need at least 2 different gesture classes to train the AI model.")
         return
 
-    # Train/Test Split (80% training, 20% validation)
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    # Train/Validation/Test Split (80% training, 10% validation, 10% test)
+    X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42, stratify=y_temp)
 
     print("\n--- Training Model 1: Random Forest Classifier ---")
     rf_clf = RandomForestClassifier(n_estimators=100, random_state=42)
     rf_clf.fit(X_train, y_train)
-    rf_pred = rf_clf.predict(X_test)
-    rf_acc = accuracy_score(y_test, rf_pred)
-    print(f"Random Forest Validation Accuracy: {rf_acc:.4f}")
+    rf_val_pred = rf_clf.predict(X_val)
+    rf_val_acc = accuracy_score(y_val, rf_val_pred)
+    print(f"Random Forest Validation Accuracy: {rf_val_acc:.4f}")
 
     print("\n--- Training Model 2: Multi-Layer Perceptron (Neural Network) ---")
     mlp_clf = MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=1000, random_state=42, early_stopping=True)
     mlp_clf.fit(X_train, y_train)
-    mlp_pred = mlp_clf.predict(X_test)
-    mlp_acc = accuracy_score(y_test, mlp_pred)
-    print(f"MLP Neural Network Validation Accuracy: {mlp_acc:.4f}")
+    mlp_val_pred = mlp_clf.predict(X_val)
+    mlp_val_acc = accuracy_score(y_val, mlp_val_pred)
+    print(f"MLP Neural Network Validation Accuracy: {mlp_val_acc:.4f}")
 
-    # Compare models and select best
+    # Compare models and select best based on validation accuracy
     print("\n==================================================")
-    print(f"Random Forest Accuracy: {rf_acc*100:.2f}%")
-    print(f"Neural Network (MLP) Accuracy: {mlp_acc*100:.2f}%")
+    print(f"Random Forest Validation Accuracy: {rf_val_acc*100:.2f}%")
+    print(f"Neural Network (MLP) Validation Accuracy: {mlp_val_acc*100:.2f}%")
     
-    if rf_acc >= mlp_acc:
+    if rf_val_acc >= mlp_val_acc:
         best_model = rf_clf
         best_name = "Random Forest Classifier"
-        best_acc = rf_acc
-        best_pred = rf_pred
+        best_acc = rf_val_acc
     else:
         best_model = mlp_clf
         best_name = "MLP Neural Network"
-        best_acc = mlp_acc
-        best_pred = mlp_pred
+        best_acc = mlp_val_acc
         
-    print(f"==> Selected Best Model: {best_name} ({best_acc*100:.2f}% Accuracy)")
+    # Evaluate final selected model on Test Set
+    test_pred = best_model.predict(X_test)
+    test_acc = accuracy_score(y_test, test_pred)
+    print(f"==> Selected Best Model: {best_name} (Validation Accuracy: {best_acc*100:.2f}%)")
+    print(f"==> Final Test Set Accuracy: {test_acc*100:.2f}%")
     print("==================================================")
 
-    # Print detailed classification report for the best model
+    # Print detailed classification report for the best model on Test Set
     class_names = [CLASSES[i] for i in sorted(unique_classes)]
-    print("\nDetailed Performance Report:")
-    print(classification_report(y_test, best_pred, target_names=class_names))
+    print("\nDetailed Performance Report (on Test Set):")
+    print(classification_report(y_test, test_pred, target_names=class_names))
 
     # Save model to disk
     with open(MODEL_FILE, "wb") as f:
