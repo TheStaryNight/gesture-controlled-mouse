@@ -3,3 +3,4 @@ mediapipe
 pynput
 screeninfo
 scikit-learn
+streamlit
